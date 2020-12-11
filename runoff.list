@@ -33,6 +33,7 @@ trap.c
 syscall.h
 syscall.c
 sysproc.c
+syswolfie.c
 
 # file system
 buf.h

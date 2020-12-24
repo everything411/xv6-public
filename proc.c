@@ -6,6 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#define min(a, b) ((a) < (b) ? (a) : (b))
 
 struct {
   struct spinlock lock;
@@ -89,6 +90,16 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
 
+  p->nice = 15;
+  p->ctime = ticks;
+  p->sstime = ticks;
+  p->estime = ticks;
+  p->rutime = 0;
+  p->retime = 0;
+  p->sltime = 0; 
+
+  p->stacksz = KERNBASE - 2 * PGSIZE;
+
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -148,7 +159,7 @@ userinit(void)
   // because the assignment might not be atomic.
   acquire(&ptable.lock);
 
-  p->state = RUNNABLE;
+  changeprocstate(p, RUNNABLE);
 
   release(&ptable.lock);
 }
@@ -190,7 +201,7 @@ fork(void)
   }
 
   // Copy process state from proc.
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
+  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz, curproc->stacksz)) == 0){
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
@@ -212,9 +223,11 @@ fork(void)
 
   pid = np->pid;
 
+  np->nice = curproc->nice;
+
   acquire(&ptable.lock);
 
-  np->state = RUNNABLE;
+  changeprocstate(np, RUNNABLE);
 
   release(&ptable.lock);
 
@@ -262,7 +275,7 @@ exit(void)
   }
 
   // Jump into the scheduler, never to return.
-  curproc->state = ZOMBIE;
+  changeprocstate(curproc, ZOMBIE);
   sched();
   panic("zombie exit");
 }
@@ -287,6 +300,10 @@ wait(void)
       if(p->state == ZOMBIE){
         // Found one.
         pid = p->pid;
+        cprintf("pid%d RUNNING ticks: %d\n", pid, p->rutime);
+        cprintf("pid%d SLEEPING ticks: %d\n", pid, p->sltime);
+        cprintf("pid%d RUNNABLE(wait) ticks: %d\n", pid, p->retime);
+        cprintf("pid%d turnaround ticks: %d\n", pid, p->etime - p->ctime);
         kfree(p->kstack);
         p->kstack = 0;
         freevm(p->pgdir);
@@ -311,6 +328,71 @@ wait(void)
   }
 }
 
+int nice(int pid, int inc)
+{
+  struct proc *currproc = myproc();
+  // struct cpu *currcpu = mycpu();
+  cprintf("nice(): %d calls nice(pid=%d, inc=%d)\n", currproc->pid, pid, inc);
+  struct proc *p = (void *)0;
+  struct proc *pp;
+  acquire(&ptable.lock);
+
+  for(pp = ptable.proc; pp < &ptable.proc[NPROC]; pp++)
+  {
+    if (pp->pid == pid)
+    {
+      p = pp;
+      break;
+    }
+  }
+
+  // process not found, fail
+  if (!p)
+  {
+    cprintf("nice(): process %d not found\n", pid);
+    release(&ptable.lock);
+    return -1;
+  }
+
+  // change the process's nice value
+  if (p->nice + inc > 31)
+  {
+    p->nice = 31;
+  } else if (p->nice + inc < 0)
+  {
+    p->nice = 0;
+  } else
+  {
+    p->nice += inc;
+  }
+
+  // if the priority becomes lower than any process on the ready list, switch to that process
+  int min_nice = currproc->nice;
+  if (p->state == RUNNABLE)
+  {
+    for(pp = ptable.proc; pp < &ptable.proc[NPROC]; pp++)
+    {
+      if (pp != p && pp->state == RUNNABLE)
+      {
+        min_nice = min(min_nice, pp->nice);
+      }
+    }
+    if (p->nice < min_nice)
+    {
+      cprintf("nice(): %d -> priority of process %d becomes lower than any process on the ready list\n", currproc->pid, p->pid);
+      changeprocstate(currproc, RUNNABLE);
+      sched();
+    }
+  }
+  else
+  {
+    cprintf("nice(): process %d is not RUNNABLE, no need to switch\n",pid);
+  }
+  
+  release(&ptable.lock);
+  return p->nice;
+}
+
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -323,27 +405,41 @@ void
 scheduler(void)
 {
   struct proc *p;
+  struct proc *pp;
   struct cpu *c = mycpu();
+  double cur_nice;
   c->proc = 0;
   
   for(;;){
     // Enable interrupts on this processor.
     sti();
-
+    // if (c->apicid != 0) continue; // lock other cpu for debug
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    double min_nice = 32.0;
+    pp = (void *)0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    {
       if(p->state != RUNNABLE)
         continue;
-
+      cur_nice = (double)p->nice - (double)(ticks - p->sstime) / 20.0;
+      if (cur_nice < min_nice)
+      {
+        min_nice = cur_nice;
+        pp = p;
+      }
+    }
+    if (min_nice < 32)
+    {
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+      // cprintf("scheduler() on cpu%d: run %d\n", c->apicid, pp->pid); // debug
+      c->proc = pp;
+      switchuvm(pp);
+      changeprocstate(pp, RUNNING);
 
-      swtch(&(c->scheduler), p->context);
+      swtch(&(c->scheduler), pp->context);
       switchkvm();
 
       // Process is done running for now.
@@ -381,12 +477,59 @@ sched(void)
   mycpu()->intena = intena;
 }
 
+void 
+changeprocstate(struct proc *p, int to)
+{
+  struct proc *curproc = p;
+  int from = curproc->state;
+  if(from == SLEEPING)
+  {
+    if(to == SLEEPING)
+      return;
+    curproc->estime = ticks;
+    curproc->sltime += (curproc->estime - curproc->sstime);
+    curproc->sstime = curproc->estime;
+    if(to == RUNNING)
+    {
+      panic("changeprocstate(): error state SLEEPING to RUNNING\n");
+    }
+  }
+  else if(from == RUNNABLE)
+  {
+    if(to == RUNNABLE)
+      return;
+    curproc->estime = ticks;
+    curproc->retime += (curproc->estime - curproc->sstime);
+    curproc->sstime = curproc->estime;
+    if(to == SLEEPING)
+    {
+      panic("changeprocstate(): error state RUNNABLE to SLEEPING");
+    }
+  }
+  else if(from == RUNNING)
+  {
+    if(to == RUNNING)
+      return;
+    curproc->estime = ticks;
+    curproc->rutime += (curproc->estime - curproc->sstime);
+    curproc->sstime = curproc->estime;
+    }
+    else{
+      curproc->sstime = ticks;
+    }
+  if(to == ZOMBIE)
+  {
+    curproc->etime = ticks;
+  }
+  curproc->state = to;
+}
+
 // Give up the CPU for one scheduling round.
 void
 yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
-  myproc()->state = RUNNABLE;
+  changeprocstate(myproc(), RUNNABLE);
   sched();
   release(&ptable.lock);
 }
@@ -437,7 +580,7 @@ sleep(void *chan, struct spinlock *lk)
   }
   // Go to sleep.
   p->chan = chan;
-  p->state = SLEEPING;
+  changeprocstate(p, SLEEPING);
 
   sched();
 
@@ -461,7 +604,7 @@ wakeup1(void *chan)
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == SLEEPING && p->chan == chan)
-      p->state = RUNNABLE;
+      changeprocstate(p, RUNNABLE);
 }
 
 // Wake up all processes sleeping on chan.
@@ -487,7 +630,7 @@ kill(int pid)
       p->killed = 1;
       // Wake process from sleep if necessary.
       if(p->state == SLEEPING)
-        p->state = RUNNABLE;
+        changeprocstate(p, RUNNABLE);
       release(&ptable.lock);
       return 0;
     }

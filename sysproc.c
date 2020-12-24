@@ -89,3 +89,14 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+int
+sys_nice(void)
+{
+  int pid;
+  int inc;
+
+  if(argint(0, &pid) < 0 || argint(1, &inc) < 0)
+    return -1;
+  return nice(pid, inc);
+}

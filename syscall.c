@@ -7,6 +7,13 @@
 #include "x86.h"
 #include "syscall.h"
 
+/*
+  0               sz             stacksz  KERNBASE-PGSIZE  KERNBASE
+  |----------------|-----------------|------------|------------|------
+  | code data heap | invalid address |   stack    |  invalid   | kernel space
+  |----------------|-----------------|------------|------------|------
+  0                                          0x7ffff000  0x80000000
+*/
 // User code makes a system call with INT T_SYSCALL.
 // System call number in %eax.
 // Arguments on the stack, from the user call to the C
@@ -18,8 +25,9 @@ int
 fetchint(uint addr, int *ip)
 {
   struct proc *curproc = myproc();
-
-  if(addr >= curproc->sz || addr+4 > curproc->sz)
+  if ((addr >= curproc->sz && addr < curproc->stacksz) ||     // sz <-> stacksz
+      (addr + 4 > curproc->sz && addr < curproc->stacksz) ||  // sz-3 <-> sz-1
+      (addr + 4 > KERNBASE - PGSIZE))                           // KERNBASE <-> PGSIZE ++
     return -1;
   *ip = *(int*)(addr);
   return 0;
@@ -34,10 +42,14 @@ fetchstr(uint addr, char **pp)
   char *s, *ep;
   struct proc *curproc = myproc();
 
-  if(addr >= curproc->sz)
+  if ((addr >= curproc->sz && addr < curproc->stacksz) || (addr >= KERNBASE - PGSIZE))
     return -1;
   *pp = (char*)addr;
-  ep = (char*)curproc->sz;
+
+  if (addr < curproc->sz) // address before sz
+    ep = (char *)curproc->sz;
+  else                    // stack
+    ep = (char *)(KERNBASE - PGSIZE);
   for(s = *pp; s < ep; s++){
     if(*s == 0)
       return s - *pp;
@@ -58,14 +70,17 @@ argint(int n, int *ip)
 int
 argptr(int n, char **pp, int size)
 {
-  int i;
+  uint ptr;
   struct proc *curproc = myproc();
  
-  if(argint(n, &i) < 0)
+  if(argint(n, (int *)&ptr) < 0)
     return -1;
-  if(size < 0 || (uint)i >= curproc->sz || (uint)i+size > curproc->sz)
+  if ((size < 0) ||
+      (ptr >= curproc->sz && ptr < curproc->stacksz) ||
+      (ptr + size > curproc->sz && ptr + size < curproc->stacksz)||
+      (ptr + size > KERNBASE - PGSIZE))
     return -1;
-  *pp = (char*)i;
+  *pp = (char*)ptr;
   return 0;
 }
 
@@ -104,6 +119,7 @@ extern int sys_wait(void);
 extern int sys_write(void);
 extern int sys_uptime(void);
 extern int sys_wolfie(void);
+extern int sys_nice(void);
 
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -128,6 +144,7 @@ static int (*syscalls[])(void) = {
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
 [SYS_wolfie]  sys_wolfie,
+[SYS_nice]    sys_nice,
 };
 
 void

@@ -23,7 +23,8 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
-int wolfie(void *buf, uint size);
+int wolfie(void *, uint);
+int nice(int, int);
 
 // ulib.c
 int stat(const char*, struct stat*);
@@ -32,6 +33,7 @@ void *memmove(void*, const void*, int);
 char* strchr(const char*, char c);
 int strcmp(const char*, const char*);
 void printf(int, const char*, ...);
+int sprintf(char*, const char*, ...);
 char* gets(char*, int max);
 uint strlen(const char*);
 void* memset(void*, int, uint);

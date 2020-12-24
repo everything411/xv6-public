@@ -46,6 +46,32 @@ trap(struct trapframe *tf)
     return;
   }
 
+  if (tf->trapno == T_PGFLT)
+  {
+    uint faultaddr;
+    struct proc *curproc = myproc();
+    if(curproc->killed)
+      exit();
+    curproc->tf = tf;
+    faultaddr = rcr2();
+    if (faultaddr < curproc->stacksz - PGSIZE || faultaddr >= KERNBASE - PGSIZE)
+    {
+      cprintf("T_PGFLT@%p: not stack, DIE!\n", faultaddr);
+      goto trap_panic_kill; 
+    }
+
+    if(allocuvm(curproc->pgdir, curproc->stacksz - PGSIZE, curproc->stacksz) == 0)
+    {
+      cprintf("T_PGFLT@%p: WTF alloc fail, DIE!\n", faultaddr);
+      goto trap_panic_kill;
+    }
+    curproc->stacksz -= PGSIZE;
+    // cprintf("T_PGFLT@%p: increase stack from %p to %p \n", faultaddr, curproc->stacksz + PGSIZE, curproc->stacksz);
+    if(curproc->killed)
+      exit();
+    return;
+  }
+
   switch(tf->trapno){
   case T_IRQ0 + IRQ_TIMER:
     if(cpuid() == 0){
@@ -80,6 +106,7 @@ trap(struct trapframe *tf)
 
   //PAGEBREAK: 13
   default:
+    trap_panic_kill:
     if(myproc() == 0 || (tf->cs&3) == 0){
       // In kernel, it must be our mistake.
       cprintf("unexpected trap %d from cpu %d eip %x (cr2=0x%x)\n",

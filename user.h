@@ -25,6 +25,10 @@ int sleep(int);
 int uptime(void);
 int wolfie(void *, uint);
 int nice(int, int);
+int mtxget(void);
+int mtxrel(int);
+int mtxacq(int);
+int mtxdel(int);
 
 // ulib.c
 int stat(const char*, struct stat*);

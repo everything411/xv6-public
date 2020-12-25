@@ -315,7 +315,7 @@ clearpteu(pde_t *pgdir, char *uva)
 pde_t*
 copyuvm(pde_t *pgdir, uint sz, uint stacksz)
 {
-  cprintf("copyuvm(pgdir=%p, sz=%p, stacksz=%p)\n", pgdir, sz, stacksz); // debug
+  // cprintf("copyuvm(pgdir=%p, sz=%p, stacksz=%p)\n", pgdir, sz, stacksz); // debug
   pde_t *d;
   pte_t *pte;
   uint pa, i, flags;

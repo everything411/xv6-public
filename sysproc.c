@@ -100,3 +100,40 @@ sys_nice(void)
     return -1;
   return nice(pid, inc);
 }
+
+int
+sys_mtxget(void)
+{
+  return mtxget();
+}
+int
+sys_mtxacq(void)
+{
+  int n;
+  if (argint(0, &n) < 0)
+  {
+    return -1;
+  }
+  return mtxacq(n);
+}
+int
+sys_mtxrel(void)
+{
+  int n;
+  if (argint(0, &n) < 0)
+  {
+    return -1;
+  }
+  return mtxrel(n);
+}
+
+int
+sys_mtxdel(void)
+{
+  int n;
+  if (argint(0, &n) < 0)
+  {
+    return -1;
+  }
+  return mtxdel(n);
+}

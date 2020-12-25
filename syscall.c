@@ -120,6 +120,11 @@ extern int sys_write(void);
 extern int sys_uptime(void);
 extern int sys_wolfie(void);
 extern int sys_nice(void);
+extern int sys_mtxget(void);
+extern int sys_mtxrel(void);
+extern int sys_mtxacq(void);
+extern int sys_mtxdel(void);
+
 
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -145,6 +150,10 @@ static int (*syscalls[])(void) = {
 [SYS_close]   sys_close,
 [SYS_wolfie]  sys_wolfie,
 [SYS_nice]    sys_nice,
+[SYS_mtxget]  sys_mtxget,
+[SYS_mtxrel]  sys_mtxrel,
+[SYS_mtxacq]  sys_mtxacq,
+[SYS_mtxdel]  sys_mtxdel,
 };
 
 void

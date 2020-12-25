@@ -22,3 +22,7 @@
 #define SYS_close  21
 #define SYS_wolfie 22
 #define SYS_nice   23
+#define SYS_mtxget 24
+#define SYS_mtxrel 25
+#define SYS_mtxacq 26
+#define SYS_mtxdel 27

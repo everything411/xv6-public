@@ -122,6 +122,10 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+int             mtxget(void);
+int             mtxacq(int n);
+int             mtxrel(int n);
+int             mtxdel(int n);
 
 // swtch.S
 void            swtch(struct context**, struct context*);

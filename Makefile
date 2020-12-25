@@ -185,6 +185,7 @@ UPROGS=\
 	_wolfietest\
 	_vmtest\
 	_schetest\
+	_mutextest\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)

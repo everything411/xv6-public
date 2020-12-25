@@ -332,7 +332,6 @@ int nice(int pid, int inc)
 {
   struct proc *currproc = myproc();
   // struct cpu *currcpu = mycpu();
-  cprintf("nice(): %d calls nice(pid=%d, inc=%d)\n", currproc->pid, pid, inc);
   struct proc *p = (void *)0;
   struct proc *pp;
   acquire(&ptable.lock);
@@ -354,14 +353,22 @@ int nice(int pid, int inc)
     return -1;
   }
 
+  if (inc == 0)
+  {
+    release(&ptable.lock);
+    return p->nice;
+  }
+
   // change the process's nice value
   if (p->nice + inc > 31)
   {
     p->nice = 31;
-  } else if (p->nice + inc < 0)
+  }
+  else if (p->nice + inc < 0)
   {
     p->nice = 0;
-  } else
+  }
+  else
   {
     p->nice += inc;
   }
@@ -388,6 +395,7 @@ int nice(int pid, int inc)
   {
     cprintf("nice(): process %d is not RUNNABLE, no need to switch\n",pid);
   }
+  cprintf("nice(): %d calls nice(pid=%d, inc=%d) = %d\n", currproc->pid, pid, inc, p->nice);
   
   release(&ptable.lock);
   return p->nice;
@@ -413,7 +421,7 @@ scheduler(void)
   for(;;){
     // Enable interrupts on this processor.
     sti();
-    // if (c->apicid != 0) continue; // lock other cpu for debug
+    if (c->apicid != 0) continue; // lock other cpu for debug
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
     double min_nice = 32.0;
@@ -674,4 +682,103 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+struct mutex
+{
+  int value;
+  struct spinlock lock;
+  struct proc *queue[NPROC];
+  struct proc *curproc;
+  int curnice, orinice;
+  int start;
+  int end;
+  int used;
+};
+struct mutex mutexs[100];
+
+int mtxget(void)
+{
+  struct mutex *s;
+  for (int i = 0; i < 100; i++)
+  {
+    s = &mutexs[i];
+    if (!s->used)
+    {
+      s->value = 1;
+      initlock(&s->lock, "mutex_lock");
+      s->end = s->start = 0;
+      s->used = 1;
+      return i;
+    }
+  }
+  return -1;
+}
+
+int mtxacq(int n)
+{
+  if (n < 0 || n > 100 || !mutexs[n].used)
+  {
+    return -1;
+  }
+  struct mutex *s = &mutexs[n];
+  acquire(&s->lock);
+  s->value--;
+  if (s->value < 0)
+  {
+    s->queue[s->end] = myproc();
+    s->end = (s->end + 1) % NPROC;
+    if (s->curnice > myproc()->nice)
+    {
+      nice(s->curproc->pid, myproc()->nice - s->curnice);
+      s->curnice = s->curproc->nice;
+      cprintf("priority donate %d nice to %d\n", s->curproc->pid, s->curnice);
+    }
+    sleep(myproc(), &s->lock);
+  }
+  s->curproc = myproc();
+  s->curnice = myproc()->nice;
+  s->orinice = s->curnice;
+  // cprintf("%d %d %d\n",s->curproc->pid,s->curnice,s->orinice);
+  
+  release(&s->lock);
+  return 0;
+}
+
+int mtxrel(int n)
+{
+  if (n < 0 || n > 100 || !mutexs[n].used)
+  {
+    return -1;
+  }
+  struct mutex *s = &mutexs[n];
+  acquire(&s->lock);
+  s->value++;
+  if (s->value <= 0)
+  {
+    wakeup(s->queue[s->start]);
+    s->queue[s->start] = 0;
+    s->start = (s->start + 1) % NPROC;
+  }
+  //cprintf("%d %d %d\n",s->curproc->pid, s->curnice, s->orinice);
+  if (s->orinice - s->curnice > 0)
+  {
+    nice(s->curproc->pid, s->orinice - s->curnice);
+    s->curnice = s->orinice;
+    cprintf("priority drop %d original nice %d\n", s->curproc->pid, s->curnice);
+  }
+
+  release(&s->lock);
+  return 0;
+}
+
+int mtxdel(int n)
+{
+  if (n < 0 || n > 100 || !mutexs[n].used)
+  {
+    return -1;
+  }
+  struct mutex *s = &mutexs[n];
+  memset(s, 0, sizeof(struct mutex));
+  return 0;
 }
